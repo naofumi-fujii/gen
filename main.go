@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"flag"
 	"fmt"
 	"go/format"
 	"io/ioutil"
@@ -12,7 +13,6 @@ import (
 	"text/template"
 
 	_ "github.com/denisenkom/go-mssqldb"
-	"github.com/droundy/goopt"
 	"github.com/jimsmart/schema"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
 	"github.com/jinzhu/inflection"
@@ -23,49 +23,28 @@ import (
 	gtmpl "github.com/smallnest/gen/template"
 )
 
-var (
-	sqlType     = goopt.String([]string{"--sqltype"}, "mysql", "sql database type such as mysql, postgres, etc.")
-	sqlConnStr  = goopt.String([]string{"-c", "--connstr"}, "nil", "database connection string")
-	sqlDatabase = goopt.String([]string{"-d", "--database"}, "nil", "Database to for connection")
-	sqlTable    = goopt.String([]string{"-t", "--table"}, "", "Table to build struct from")
-
-	packageName = goopt.String([]string{"--package"}, "", "name to set for package")
-
-	jsonAnnotation = goopt.Flag([]string{"--json"}, []string{"--no-json"}, "Add json annotations (default)", "Disable json annotations")
-	gormAnnotation = goopt.Flag([]string{"--gorm"}, []string{}, "Add gorm annotations (tags)", "")
-	gureguTypes    = goopt.Flag([]string{"--guregu"}, []string{}, "Add guregu null types", "")
-
-	rest = goopt.Flag([]string{"--rest"}, []string{}, "Enable generating RESTful api", "")
-
-	verbose = goopt.Flag([]string{"-v", "--verbose"}, []string{}, "Enable verbose output", "")
-)
-
-func init() {
-	// Setup goopts
-	goopt.Description = func() string {
-		return "ORM and RESTful API generator for Mysql"
-	}
-	goopt.Version = "0.1"
-	goopt.Summary = `gen [-v] --connstr "user:password@/dbname" --package pkgName --database databaseName --table tableName [--json] [--gorm] [--guregu]`
-
-	//Parse options
-	goopt.Parse(nil)
-
-}
-
 func main() {
-	// Username is required
-	if sqlConnStr == nil || *sqlConnStr == "" {
-		fmt.Println("sql connection string is required! Add it with --connstr=s")
-		return
-	}
 
-	if sqlDatabase == nil || *sqlDatabase == "" {
-		fmt.Println("Database can not be null")
-		return
-	}
+	driverName := flag.String("driver", "", "mysql, postgres")
+	host := flag.String("host", "", "127.0.0.1")
+	port := flag.String("port", "", "5432")
+	user := flag.String("user", "", "user_name")
+	dbname := flag.String("dbname", "", "database name")
 
-	var db, err = sql.Open(*sqlType, *sqlConnStr)
+	packageName := flag.String("package", "", "package name")
+
+	jsonAnnotation := flag.Bool("json", false, "json annotate")
+	verbose := flag.Bool("v", false, "verbose")
+	gormAnnotation := flag.Bool("gorm", true, "gorm annotate")
+	gureguTypes := flag.Bool("guregu", false, "use guregu")
+	rest := flag.Bool("rest", false, "")
+
+	flag.Parse()
+
+	dataSourceName := fmt.Sprintf("sslmode=disable host=%v port=%v user=%v dbname=%v", *host, *port, *user, *dbname)
+	fmt.Println(*driverName)
+	fmt.Println(dataSourceName)
+	db, err := sql.Open(*driverName, dataSourceName)
 	if err != nil {
 		fmt.Println("Error in open database: " + err.Error())
 		return
@@ -74,14 +53,10 @@ func main() {
 
 	// parse or read tables
 	var tables []string
-	if *sqlTable != "" {
-		tables = strings.Split(*sqlTable, ",")
-	} else {
-		tables, err = schema.TableNames(db)
-		if err != nil {
-			fmt.Println("Error in fetching tables information from mysql information schema")
-			return
-		}
+	tables, err = schema.TableNames(db)
+	if err != nil {
+		fmt.Println(err)
+		return
 	}
 	// if packageName is not set we need to default it
 	if packageName == nil || *packageName == "" {
@@ -114,7 +89,11 @@ func main() {
 		structName = inflection.Singular(structName)
 		structNames = append(structNames, structName)
 
-		modelInfo := dbmeta.GenerateStruct(db, *sqlType, tableName, structName, "model", *jsonAnnotation, *gormAnnotation, *gureguTypes)
+		modelInfo := dbmeta.GenerateStruct(db, *driverName, tableName, structName, "model", *jsonAnnotation, *gormAnnotation, *gureguTypes)
+
+		if *verbose {
+			fmt.Println(modelInfo)
+		}
 
 		var buf bytes.Buffer
 		err = t.Execute(&buf, modelInfo)
